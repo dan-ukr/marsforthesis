@@ -1,0 +1,255 @@
+
+import pandas as pd
+
+df = pd.read_csv('ESS8e02_3-ESS9e03_2-ESS10-subset.csv')
+print(df.head())
+print(df.columns)
+
+# 1. Перекодировка уровней образования
+# Создаем словарь для перекодировки уровней образования
+def recode_education(x):
+    # Первичное образование (A-C: коды 1-3)
+    if x in [1, 2, 3]:
+        return 1
+    # Вторичное образование (D-K: коды 4-11)
+    elif x in [4, 5, 6, 7, 8, 9, 10, 11]:
+        return 2
+    # Третичное образование (L-U: коды 12-21)
+    elif x in [12, 13, 14, 15, 16, 17, 18, 19, 20, 21]:
+        return 3
+    # Выше третичного (V-Z: коды 22-26)
+    elif x in [22, 23, 24, 25, 26]:
+        return 4
+    # Специальные коды оставляем без изменений
+    elif x in [5555, 7777, 8888, 9999]:
+        return x
+    else:
+        return np.nan
+
+# Применяем перекодировку
+df['edlvdfr_recoded'] = df['edlvdfr'].apply(recode_education)
+
+# Создаем словарь с метками значений
+education_labels = {
+    1: 'Первичное',
+    2: 'Вторичное',
+    3: 'Третичное',
+    4: 'Выше третичного',
+    5555: 'Другое',
+    7777: 'Отказ',
+    8888: 'Не знаю',
+    9999: 'Нет ответа'
+}
+
+# Показываем распределение новой переменной
+print(df['edlvdfr_recoded'].map(education_labels).value_counts())
+
+# Создание переменных голосования
+
+# Обновляем функцию для классификации голосования с учетом правильных названий переменных
+def classify_vote(wave, party_code):
+    # Крайне левые партии
+    far_left = {
+        8: [4, 5, 6, 12],  # Волна 8
+        9: [1, 2, 3, 4],    # Волна 9
+        10: [1, 2, 3, 4]    # Волна 10
+    }
+    # Центристские партии
+    center = {
+        8: [1, 3, 7, 9, 11, 12],  # Волна 8
+        9: [5, 6, 7, 8, 9],       # Волна 9
+        10: [5, 6, 7, 8, 9]       # Волна 10
+    }
+    # Крайне правые партии
+    far_right = {
+        8: [2, 8],        # Волна 8
+        9: [10, 11],      # Волна 9
+        10: [10, 11]      # Волна 10
+    }
+    # Не голосовали
+    didn_t_vote = [13, 14, 15, 16, 66, 77, 88, 99]
+
+    # Классификация по категориям
+    if party_code in didn_t_vote:
+        return "didn't vote"
+    elif wave in far_left and party_code in far_left[wave]:
+        return "vote far_left"
+    elif wave in center and party_code in center[wave]:
+        return "vote center"
+    elif wave in far_right and party_code in far_right[wave]:
+        return "vote far_right"
+    else:
+        return None  # Если код не соответствует ни одной категории
+
+# Применяем функцию к данным
+# Используем переменные prtvtefr, prtvtdfr, prtvtcfr для волн 8, 9 и 10 соответственно
+df['vote_category'] = df.apply(
+    lambda row: classify_vote(
+        wave=row['essround'],  # Волна ESS
+        party_code=row['prtvtefr'] if row['essround'] == 8 else (
+            row['prtvtdfr'] if row['essround'] == 9 else row['prtvtcfr']
+        )
+    ),
+    axis=1
+)
+
+# Показываем распределение новой переменной
+print("Распределение категорий голосования:")
+print(df['vote_category'].value_counts())
+
+# Создание индикаторов при помощи PCA
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.decomposition import PCA
+
+# Определим группы переменных
+euroscep_vars = ['trstep', 'atcherp', 'euftf', 'vteurmmb']
+migrphob_vars = ['imwbcnt', 'imsmetn', 'imueclt', 'imbgeco', 'impcntr', 'imdfetn']
+socpol_vars = ['iphlppl', 'ipeqopt', 'gincdif', 'stfedu', 'stfhlth']
+
+# Функция для нормализации одной переменной
+def normalize_var(series):
+    series = series.copy()
+    # Заменяем значения >10 на NaN
+    series[series > 10] = np.nan
+    # Нормализуем к 0-1
+    if not series.isna().all():
+        min_val = series.min()
+        max_val = series.max()
+        series = (series - min_val) / (max_val - min_val)
+    return series
+
+# Нормализуем основные переменные
+for v in euroscep_vars + migrphob_vars + socpol_vars:
+    if v in df_clean.columns:
+        df_clean[v + '_norm'] = normalize_var(df_clean[v])
+
+# Инвертируем и нормализуем переменные для socpol
+for v in ['iphlppl', 'ipeqopt', 'gincdif']:
+    if v in df_clean.columns:
+        inv_series = df_clean[v].max() - df_clean[v]
+        df_clean[v + '_inv_norm'] = normalize_var(inv_series)
+norm_cols = [c for c in df_clean.columns if c.endswith('_norm')]
+print(df_clean[norm_cols].head())
+
+# Создадим списки нормализованных переменных для каждой группы
+euroscep_norm = [v + '_norm' for v in euroscep_vars]
+migrphob_norm = [v + '_norm' for v in migrphob_vars]
+socpol_norm = [v + '_inv_norm' if v in ['iphlppl', 'ipeqopt', 'gincdif'] else v + '_norm' for v in socpol_vars]
+
+# Функция для создания корреляционной матрицы для конкретной волны
+def get_corr_matrix(df, vars_list, wave):
+    return df[df['essround'] == wave][vars_list].corr()
+
+# 1. Корреляционные матрицы по волнам
+for wave in [8, 9, 10]:
+    print(f"\
+Волна {wave}")
+    
+    print("\
+Корреляционная матрица для Евроскептицизма:")
+    print(get_corr_matrix(df_clean, euroscep_norm, wave).round(3))
+    
+    print("\
+Корреляционная матрица для Мигрантофобии:")
+    print(get_corr_matrix(df_clean, migrphob_norm, wave).round(3))
+    
+    print("\
+Корреляционная матрица для Социальной политики:")
+    print(get_corr_matrix(df_clean, socpol_norm, wave).round(3))
+
+# 2. PCA для каждой группы переменных
+def run_pca_analysis(df, vars_list, name):
+    # Удаляем пропущенные значения
+    data = df[vars_list].dropna()
+    
+    # PCA
+    pca = PCA()
+    pca_result = pca.fit_transform(data)
+    
+    # График каменистой осыпи
+    plt.figure(figsize=(6, 4))
+    plt.plot(range(1, len(vars_list) + 1), pca.explained_variance_ratio_, 'bo-')
+    plt.title(f'График каменистой осыпи - {name}')
+    plt.xlabel('Компонента')
+    plt.ylabel('Доля объясненной дисперсии')
+    plt.grid(True)
+    plt.show()
+    
+    # Веса переменных
+    loadings = pca.components_[0]
+    # Нормализуем веса, чтобы их сумма была равна 1
+    loadings = np.abs(loadings) / np.sum(np.abs(loadings))
+    
+    print(f"\
+Веса переменных для {name}:")
+    for var, weight in zip(vars_list, loadings):
+        print(f"{var}: {weight:.3f}")
+    
+    # Формула
+    formula = f"{name} = " + " + ".join([f"{weight:.3f}*{var}" for var, weight in zip(vars_list, loadings)])
+    print("\
+Формула:")
+    print(formula)
+    
+    return loadings
+
+# Запускаем PCA анализ для каждой группы
+print("PCA анализ:")
+euroscep_weights = run_pca_analysis(df_clean, euroscep_norm, "Евроскептицизм")
+migrphob_weights = run_pca_analysis(df_clean, migrphob_norm, "Мигрантофобия")
+socpol_weights = run_pca_analysis(df_clean, socpol_norm, "Социальная политика")
+
+# Рассчитаем итоговые индикаторы с использованием полученных весов
+# Создаем функцию для расчета взвешенного индикатора
+def calculate_indicator(df, vars_list, weights):
+    # Умножаем каждую переменную на соответствующий вес
+    weighted_vars = []
+    for var, weight in zip(vars_list, weights):
+        weighted_vars.append(df[var] * weight)
+    
+    # Суммируем взвешенные переменные
+    indicator = sum(weighted_vars)
+    
+    # Нормализуем к шкале 0-1
+    indicator = (indicator - indicator.min()) / (indicator.max() - indicator.min())
+    return indicator
+
+# Рассчитываем индикаторы
+df_clean['euroscep_indicator'] = calculate_indicator(df_clean, euroscep_norm, euroscep_weights)
+df_clean['migrphob_indicator'] = calculate_indicator(df_clean, migrphob_norm, migrphob_weights)
+df_clean['socpol_indicator'] = calculate_indicator(df_clean, socpol_norm, socpol_weights)
+
+# Визуализация распределения индикаторов по волнам
+plt.figure(figsize=(15, 5))
+
+# Евроскептицизм
+plt.subplot(131)
+sns.boxplot(x='essround', y='euroscep_indicator', data=df_clean)
+plt.title('Евроскептицизм')
+plt.ylim(0, 1)
+
+# Мигрантофобия
+plt.subplot(132)
+sns.boxplot(x='essround', y='migrphob_indicator', data=df_clean)
+plt.title('Мигрантофобия')
+plt.ylim(0, 1)
+
+# Социальная политика
+plt.subplot(133)
+sns.boxplot(x='essround', y='socpol_indicator', data=df_clean)
+plt.title('Отношение к социальной политике')
+plt.ylim(0, 1)
+
+plt.tight_layout()
+plt.show()
+
+# Выведем описательную статистику индикаторов по волнам
+for indicator in ['euroscep_indicator', 'migrphob_indicator', 'socpol_indicator']:
+    print(f"\
+Описательная статистика для {indicator}:")
+    print(df_clean.groupby('essround')[indicator].describe().round(3))
+
