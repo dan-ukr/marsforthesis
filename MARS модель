@@ -1,0 +1,89 @@
+# R
+# Загрузка библиотек
+library(earth)  
+library(ggplot2)  
+library(reshape2)  
+library(dplyr)  
+
+data <- read.csv("final_dataset.csv")  
+  
+# Создание категорий для переменных голосования (классов)
+data_with_dummies <- data  
+voting_dummies <- model.matrix(~ vote_ideology - 1, data = data)  
+colnames(voting_dummies) <- gsub("vote_ideology", "", colnames(voting_dummies))  
+colnames(voting_dummies) <- gsub(" ", "_", colnames(voting_dummies))   
+data_with_dummies <- cbind(data, voting_dummies)  
+  
+# Очистка датасета 
+required_vars <- c("essround", "migrphob", "socpol", "euroscep",   
+                  "vote_far_right", "vote_far_left")  
+data_clean <- na.omit(data_with_dummies[, required_vars])  
+  
+# Построение моделей
+models <- list()  
+  
+for (wave in unique(data_clean$essround)) {  
+    wave_data <- subset(data_clean, essround == wave)  
+      
+    # Model for far-right voting  
+    model_fr <- earth(vote_far_right ~ migrphob + socpol + euroscep,   
+                     data = wave_data,  
+                     degree = 2)  
+    models[[paste0("wave_", wave, "_far_right")]] <- model_fr  
+      
+    # Model for far-left voting  
+    model_fl <- earth(vote_far_left ~ migrphob + socpol + euroscep,   
+                     data = wave_data,  
+                     degree = 2)  
+    models[[paste0("wave_", wave, "_far_left")]] <- model_fl  
+}   
+save(models, file = 'earth_models_clean.RData')  
+  
+# Выгрузка коэффициентов  
+extract_coef <- function(model) {  
+    coef_summary <- coef(model)  
+    terms <- names(coef_summary)  
+    values <- as.numeric(coef_summary)  
+    data.frame(term = terms, coefficient = values)  
+}  
+coef_data <- data.frame()  
+  
+for (model_name in names(models)) {  
+    model_coefs <- extract_coef(models[[model_name]])  
+      
+    # Add model metadata  
+    wave <- as.numeric(gsub(".*wave_([0-9]+).*", "\\1", model_name))  
+    type <- ifelse(grepl("far_right", model_name), "Far Right", "Far Left")  
+      
+    model_coefs$wave <- wave  
+    model_coefs$type <- type  
+      
+    coef_data <- rbind(coef_data, model_coefs)  
+}  
+  
+# Вывод итогов каждой модели
+for (model_name in names(models)) {  
+    cat("\nModel:", model_name, "\n")  
+    print(summary(models[[model_name]])$coefficients)  
+}  
+  
+write.csv(coef_data, "model_coefficients.csv", row.names = FALSE)  
+  
+# Визуализация
+plot_coef <- ggplot(coef_data[coef_data$term != "(Intercept)", ],   
+                    aes(x = wave, y = coefficient, color = term, linetype = type,  
+                        group = interaction(term, type))) +  
+    geom_line() +  
+    geom_point() +  
+    theme_minimal() +  
+    labs(title = "MARS Model Coefficients Over Time",  
+         x = "ESS Wave",  
+         y = "Coefficient Value",  
+         color = "Predictor",  
+         linetype = "Voting Type") +  
+    theme(legend.position = "bottom",  
+          plot.title = element_text(hjust = 0.5),  
+          legend.text = element_text(size = 8),  
+          legend.title = element_text(size = 9))   
+ggsave("coefficient_trends.png", plot = plot_coef, width = 12, height = 8)  
+print(plot_coef)  
