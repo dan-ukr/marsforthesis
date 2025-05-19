@@ -1,0 +1,91 @@
+# Создание новых переменных
+df['gender'] = df['gndr'].map({1: 'Male', 2: 'Female'})
+df['migrant'] = df['brncntr'].map({1: 'Native', 2: 'Migrant'})
+df['unemployed'] = df['emplrel'].map({1: 'Employed', 2: 'Self-employed', 
+                                     3: 'Working for family business', 
+                                     4: 'Unemployed', 5: 'Unemployed'})
+df['unemployed'] = df['unemployed'].map({'Unemployed': 1, 'Employed': 0, 
+                                        'Self-employed': 0, 'Working for family business': 0})
+
+# Удаление строк с пропущенными значениями
+df_clean = df.dropna(subset=['gender', 'migrant', 'unemployed', 'agea', 'education', 'vote_ideology'])
+
+# Функция для анализа волны
+def analyze_wave(wave_num, df):
+    wave_data = df[df['essround'] == wave_num].copy()
+    
+    X = pd.DataFrame({
+        'gender': wave_data['gender_encoded'],
+        'education': wave_data['education_encoded'],
+        'migrant': wave_data['migrant_encoded'],
+        'unemployed': wave_data['unemployed'],
+        'age': wave_data['agea']
+    })
+    
+    scaler = StandardScaler()
+    X[['age']] = scaler.fit_transform(X[['age']])
+    
+    y = wave_data['vote_ideology_encoded']
+    
+    model = LogisticRegression(multi_class='multinomial', max_iter=1000)
+    model.fit(X, y)
+    
+    feature_names = ['gender', 'education', 'migrant', 'unemployed', 'age']
+    
+    # Бутстрап для p-values
+    n_iterations = 1000
+    n_samples = len(X)
+    coefs = np.zeros((n_iterations, len(feature_names), len(np.unique(y))))
+    
+    for i in range(n_iterations):
+        indices = np.random.randint(0, n_samples, n_samples)
+        sample_X = X.iloc[indices]
+        sample_y = y.iloc[indices]
+        model.fit(sample_X, sample_y)
+        coefs[i] = model.coef_.T
+    
+    p_values = np.zeros((len(feature_names), len(np.unique(y))))
+    for i in range(len(feature_names)):
+        for j in range(len(np.unique(y))):
+            p_values[i, j] = np.mean(coefs[:, i, j] <= 0) * 2
+    
+    return {
+        'coefficients': model.coef_,
+        'p_values': p_values,
+        'feature_names': feature_names,
+        'classes': model.classes_,
+        'model': model,
+        'X': X,
+        'y': y
+    }
+
+# Анализ каждой волны
+results = {}
+for wave in [8, 9, 10]:
+    results[wave] = analyze_wave(wave, df_clean)
+    print(f"\nРезультаты для волны {wave}:")
+    for i, feature in enumerate(results[wave]['feature_names']):
+        for j, class_name in enumerate(results[wave]['classes']):
+            coef = results[wave]['coefficients'][j][i]
+            p_val = results[wave]['p_values'][i][j]
+            if p_val < 0.1:  # Показываем только значимые предикторы
+                print(f"{feature} -> {le_vote.inverse_transform([class_name])[0]}: coef = {coef:.3f} (p = {p_val:.3f})")
+
+# Визуализация
+plt.figure(figsize=(15, 5))
+for wave in [8, 9, 10]:
+    plt.subplot(1, 3, wave-7)
+    coeffs = results[wave]['coefficients']
+    features = results[wave]['feature_names']
+    
+    sns.heatmap(coeffs, 
+                xticklabels=features,
+                yticklabels=le_vote.inverse_transform(results[wave]['classes']),
+                cmap='RdBu_r',
+                center=0)
+    plt.title(f'Wave {wave} Coefficients')
+    plt.xticks(rotation=45)
+
+plt.tight_layout()
+plt.savefig('coefficients_heatmap.png')
+plt.show()
