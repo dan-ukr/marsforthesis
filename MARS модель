@@ -1,4 +1,4 @@
-# R
+# Запускать в R
 # Загрузка библиотек
 library(earth)  
 library(ggplot2)  
